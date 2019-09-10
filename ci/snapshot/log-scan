@@ -9,6 +9,9 @@ from datetime import datetime, timezone
 
 import botocore_amazon.monkeypatch
 import boto3
+import time
+from textwrap import TextWrapper
+
 
 ################################################################
 
@@ -88,6 +91,35 @@ def create_parser():
                      """
                     )
 
+    arg.add_argument('--correlation-ids',
+                     action='store_true',
+                     help="""
+                     Display the list of correlation ids (describing a proof run) and their associated git commit information.
+                     """
+                     )
+
+    arg.add_argument('--task-tree',
+                     metavar='CORRELATION_ID',
+                     action='store',
+                     help="""
+                     List all tasks associated with a correlation id, their relationships, and their status.  Use a correlation_id as an
+                     argument.
+                     """)
+
+    arg.add_argument('--task-log',
+                     action='store_true',
+                     help="""
+                     Dump the log associated with the task""")
+
+    arg.add_argument('--diagnose',
+                     metavar='DIAGNOSE',
+                     help="""
+                     Diagnose failures using correlation id.  Use a correlation_id discovered by the --correlation_ids 
+                     flag as an argument.
+                     """
+                     )
+
+
     return arg
 
 ################################################################
@@ -101,6 +133,7 @@ class LogGroup:
         self.invoke_ = {'name': None, 'time': 0}
         self.batch_ = {'name': None, 'time': 0}
         self.status_ = {'name': None, 'time': 0}
+        self.prepare_ = {'name': None, 'time': 0}
 
         self.logs = client.describe_log_groups()['logGroups']
 
@@ -123,6 +156,10 @@ class LogGroup:
                 if self.batch_['time'] < start:
                     self.batch_ = {'name': name, 'time': start}
                 continue
+            if name.find('/aws/codebuild/Prepare-Source-Project') > -1:
+                if self.prepare_['time'] < start:
+                    self.prepare_ = {'name': name, 'time': start}
+                continue
 
     def webhook(self):
         """Log group for the webhook lambda."""
@@ -139,6 +176,10 @@ class LogGroup:
     def batch(self):
         """Log group for AWS Batch."""
         return self.batch_['name']
+
+    def prepare(self):
+        """Log group for prepare source project container"""
+        return self.prepare_['name']
 
     def log_name(self, log):
         """Log group for log containing the string log."""
@@ -444,6 +485,141 @@ def dump_batch_status(session, status='FAILED', brief=False):
                 print('  '+job)
 
 ################################################################
+# MWW additions
+################################################################
+
+def await_query_result(client, query_id):
+    kwargs = {'queryId': query_id}
+    result = client.get_query_results(**kwargs)
+    while result['status'] in set(['Scheduled', 'Running']):
+        print("Query result = {}.  Waiting 2 seconds".format(result['status']))
+        time.sleep(2)
+        result = client.get_query_results(**kwargs)
+    return result
+
+
+def query_result_to_list_dict(result):
+    list_dict = []
+    for log_event in result['results']:
+        event_dict = {}
+        for kvp in log_event:
+            event_dict[kvp["field"]] = kvp["value"]
+        list_dict.append(event_dict)
+    return list_dict
+
+
+def start_query(client, loggroupnames, query, starttime, endtime):
+    print("limiting query to the first 1000 results")
+    kwargs = {'logGroupNames': loggroupnames,
+              'startTime': starttime,
+              'queryString': query,
+              'limit': 1000}
+    if endtime:
+        kwargs['endTime'] = endtime
+
+    # start the query
+    # print("start_query args: " + str(kwargs))
+    result = client.start_query(**kwargs)
+    return result['queryId']
+
+
+def dump_correlation_ids(client, group, start_time, end_time):
+    log_groups = [group.webhook()]
+    query = ("fields correlation_list.0, event.body "
+             "| filter ispresent(correlation_list.0) "
+             "| filter task_name = \"HandleWebhookLambda\" "
+             "| filter status like /COMPLETED/")
+    query_id = start_query(client, log_groups, query, start_time, end_time)
+    result = await_query_result(client, query_id)
+    list_dict = query_result_to_list_dict(result)
+
+    textwrap = TextWrapper(subsequent_indent=set_indent(21), width=120)
+    print("{0:<40} {1}".format("correlation_list", "Github commit information"))
+
+    for elem in list_dict:
+        print(textwrap.fill("{0:<40} {1}".format(elem["correlation_list.0"], str(elem.get("event.body")))))
+
+
+### Task tree related stuff.
+class KeyTree():
+    def __init__(self, key, elements = None):
+        self.key = key
+        self.children = {}
+        self.elements = []
+
+    def mk_child(self, head):
+        return KeyTree(head)
+
+    def add_element(self, key_path, element):
+        if not key_path:
+            self.elements.append(element)
+        else:
+            head, *tail = key_path
+            if not (self.children.get(head)):
+                self.children[head] = self.mk_child(head)
+            self.children[head].add_element(tail, element)
+
+def set_indent(depth):
+    return "" if depth == 0 else "  " + set_indent(depth-1)
+
+class TaskTree(KeyTree):
+
+    def mk_child(self, head):
+        return TaskTree(head)
+
+    def launch_msgs(self):
+        return filter(lambda x: x['status'].startswith("LAUNCH"), self.elements)
+
+    def started_msgs(self):
+        return filter(lambda x: x['status'].startswith("STARTED"), self.elements)
+
+    def completed_msgs(self):
+        return filter(lambda x: x['status'].startswith("COMPLETED"), self.elements)
+
+    def timestamp_sorted_msgs(self):
+        return sorted(lambda x: x['@timestamp'], self.elements)
+
+    def pprint(self, textwrapper, depth):
+        textwrapper.initial_indent = set_indent(depth)
+        textwrapper.subsequent_indent = set_indent(depth+1)
+        print(textwrapper.fill("Key: " + str(self.key)))
+        print(textwrapper.fill("Messages:"))
+        for elem in self.elements:
+            summary = {"task_id" : elem['task_id'], "task_name" : elem['task_name'], "status" : elem['status']}
+            print(textwrapper.fill(str(summary)))
+        print(textwrapper.fill("Children:"))
+        for child in self.children.values():
+            child.pprint(textwrapper, depth+1)
+
+
+def dict_update_list(dict, key, val):
+    dict[key] = dict.get(key, []).append(val)
+
+def create_task_tree(client, group, correlation_id, start_time, end_time):
+    log_groups = [group.webhook(), group.invoke(), group.status(), group.prepare()]
+    query = "fields @message | filter correlation_list.0 = \"{}\" | filter ispresent(status)".format(
+        correlation_id)
+    # print("Query: " + query)
+    query_id = start_query(client, log_groups, query, start_time, end_time)
+    result = await_query_result(client, query_id)
+    # print("Result: " + str(result))
+    list_dict = query_result_to_list_dict(result)
+    if not list_dict:
+        print("No data for correlation_id {} during the specified interval".format(correlation_id))
+        return []
+
+    # print("list_dict: " + str(list_dict))
+    # if we sort the keys in the dict, we have a depth-first view of the tree.
+    task_tree = TaskTree("root", [])
+    for elem in list_dict:
+        msg = json.loads(elem['@message'])
+        task_tree.add_element(msg['correlation_list'],
+                             msg)
+
+    textwrapper = TextWrapper(width=120)
+    task_tree.pprint(textwrapper, 0)
+
+################################################################
 
 def scan(args, client):
     utctime = time_from_iso(args.utc)
@@ -486,6 +662,24 @@ def scan(args, client):
     if args.dump:
         dump_log(client, group, utcstart, utcend, args.dump, args.brief)
 
+    if args.correlation_ids:
+        dump_correlation_ids(client, group, utcstart, utcend)
+
+    if args.task_tree:
+        create_task_tree(client, group, args.task_tree, utcstart, utcend)
+
+    if args.diagnose:
+        diagnose(client, group, args.diagnose, utcstart, utcend)
+
+def temp(session):
+    awsbatch = session.client('batch')
+    results = awsbatch.describe_job_queues()
+    print("describe job queues: " + str(results))
+    print("Attempting listitems for queue cbmc")
+    results = awsbatch.list_jobs(jobQueue='CBMCJobQueue',
+                                 jobStatus= "FAILED")
+    print(str(results))
+
 def main():
     args = create_parser().parse_args()
     session = boto3.session.Session(profile_name=args.profile)
@@ -496,6 +690,8 @@ def main():
 
     client = session.client('logs')
     scan(args, client)
+
+    # temp(session)
 
 if __name__ == '__main__':
     main()

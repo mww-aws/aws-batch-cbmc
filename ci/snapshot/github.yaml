@@ -185,6 +185,7 @@ Resources:
           import json
           import traceback
           from pprint import pprint
+          import logging
 
           import boto3
 
@@ -203,18 +204,34 @@ Resources:
               signature = 'sha1=' + h.hexdigest()
               return hmac.compare_digest(signature, github_signature)
 
-          def print_summary(event, response):
-              statusCode = response['statusCode']
+          def summary_string(event, response):
               summary = {}
-              summary['function'] = "HandleWebhookLambda"
-              summary['orig_aws_request_id'] = event['orig_aws_request_id']
-              summary['status'] = "OK" if (statusCode >= 200 and statusCode <= 299) else "FAILED"
-              summary['statusCode'] = statusCode
+              request_id = event['aws_request_id']
+              summary['task_name'] = "HandleWebhookLambda"
+              summary['task_id'] = request_id
+              summary['correlation_list'] = [request_id]
+              summary['status'] = response['status']
               summary['event'] = event
               summary['response'] = response
-              print(json.dumps(summary))
+              return json.dumps(summary)
+
+          def task_start(event, context):
+              response = {}
+              response['status'] = "STARTED"
+              event['aws_request_id'] = context.aws_request_id
+              print(summary_string(event, response))
+
+          def task_complete(event, response):
+              # create a fresh copy so as not to pollute the global response
+              response = response.copy()
+              print("Extracting statusCode")
+              statusCode = response['statusCode']
+              response['status'] = "SUCCEEDED" if (statusCode >= 200 and statusCode <= 299) else "FAILED"
+              print("printing")
+              print(summary_string(event, response))
 
           def lambda_handler(event, context):
+              task_start(event, context)
               print("event = ")
               print(json.dumps(event))
               print("context = ")
@@ -229,7 +246,7 @@ Resources:
               try:
                   event['headers'] = {k.lower(): v
                                       for k, v in event['headers'].items()}
-                  event['orig_aws_request_id'] = context.aws_request_id
+                  event['aws_request_id'] = context.aws_request_id
                   if not check_hmac(
                           str(event['headers']['x-hub-signature']),
                           str(event['body'])):
@@ -251,7 +268,7 @@ Resources:
 
               print("response = ")
               print(json.dumps(response))
-              print_summary(event, response)
+              task_complete(event, response)
               return response
 
   GitHubLambdaAPI:

@@ -17,6 +17,7 @@ import boto3
 
 import cbmc_ci_start
 import cbmc_ci_github
+import clog_writert
 
 # Too hard to install, just run git as a subprocess
 # import pygit2
@@ -126,6 +127,21 @@ def get_arguments():
 
     ################################################################
 
+    parser.add_argument(
+        '--correlation-list',
+        metavar='CORRELATION_LIST',
+        help="""
+        An ID for tracing the invocation back to the original Github event.
+        """
+    )
+    parser.add_argument(
+        '--task-id',
+        metavar='TASK_ID',
+        help="""
+        An ID for identifying the current task.
+        """
+    )
+
     arg = parser.parse_args()
     if not arg.repository:
         # Environment value could be an empty string
@@ -155,6 +171,12 @@ def get_arguments():
         arg.tarfile_path = env if env else None
     if not arg.tarfile_name:
         arg.tarfile_name = make_tarfile_name(arg.repository, arg.sha)
+    if not arg.correlation_list:
+        env = os.environ.get('CORRELATION_LIST')
+        arg.correlation_list = json.loads(env) if env else []
+    if not arg.task_id:
+        env = os.environ.get('CODEBUILD_BUILD_ID')
+        arg.task_id = env if env else None
     return arg
 
 ################################################################
@@ -322,10 +344,11 @@ def generate_cbmc_makefiles(group_names, root):
 ################################################################
 # CBMC Batch
 
-def generate_cbmc_jobs(src, repo_id, repo_sha, is_draft, tarfile):
+def generate_cbmc_jobs(src, repo_id, repo_sha, is_draft, tarfile, logger):
     # Find (proof-name, proof-directory) pairs for all proofs under src
     tasks = find_tasks(PROOF_MARKERS, src)
     print("{} tasks found".format(len(tasks)))
+    pending_exception = None
 
     for (proofname, proofdir) in tasks:
         # pylint: disable=broad-except
@@ -333,35 +356,53 @@ def generate_cbmc_jobs(src, repo_id, repo_sha, is_draft, tarfile):
             # Try to run batch
             (jobname, expected) = cbmc_ci_start.run_batch(
                 os.environ['AWS_REGION'], proofdir, src, proofname, tarfile)
+
+            # Log result
+            child_correlation_list = logger.create_child_correlation_list()
+            logger.launch_child(jobname, None, child_correlation_list)
+
             cbmc_ci_start.batch_bookkeep(
                 ".", repo_id, repo_sha, is_draft, expected, proofname,
-                jobname)
+                jobname, json.dumps(child_correlation_list))
         except Exception as e:
             # Update commit status to error
+            pending_exception = e
             traceback.print_exc()
             cbmc_ci_github.update_status(
                 "error", proofname, None,
                 "Problem launching verification", repo_id, repo_sha, False)
             print("Error: " + str(e))
+            response = {'proofname': proofname,
+                        'error' : "Exception: {}; Traceback: {}".format(str(e), traceback.format_exc())}
 
-
+    if pending_exception is not None:
+        raise pending_exception
 
 ################################################################
 
 def source_prepare():
     arg = get_arguments()
-    logging.basicConfig(level=getattr(logging, arg.logging.upper()),
-                        format='%(levelname)s: %(message)s')
-    logging.debug(debug_json('invocation', script_data(arg)))
+    logger = clog_writert.CLogWriter("prepare_source:generate_cbmc_jobs", arg.task_id, arg.correlation_list)
+    logger.started()
+    try:
+        logging.basicConfig(level=getattr(logging, arg.logging.upper()),
+                            format='%(levelname)s: %(message)s')
+        logging.debug(debug_json('invocation', script_data(arg)))
 
-    base_name = repository_basename(arg.repository)
-    clone_repository(arg.repository, base_name)
-    checkout_repository(arg.sha, arg.branch, base_name)
-    generate_cbmc_makefiles(PROOF_MARKERS, base_name)
-    generate_tarfile(arg.tarfile_name, base_name)
-    upload_tarfile_to_s3(arg.tarfile_name, arg.bucket, arg.tarfile_path)
-    generate_cbmc_jobs(
-        base_name, arg.id, arg.sha, arg.is_draft, arg.tarfile_name)
+        base_name = repository_basename(arg.repository)
+        clone_repository(arg.repository, base_name)
+        checkout_repository(arg.sha, arg.branch, base_name)
+        generate_cbmc_makefiles(PROOF_MARKERS, base_name)
+        generate_tarfile(arg.tarfile_name, base_name)
+        upload_tarfile_to_s3(arg.tarfile_name, arg.bucket, arg.tarfile_path)
+        generate_cbmc_jobs(
+            base_name, arg.id, arg.sha, arg.is_draft, arg.tarfile_name, logger)
+        logger.summary(clog_writert.SUCCEEDED, vars(arg), {})
+    except Exception as e:
+        response = {'error' : "Exception: {}; Traceback: {}".format(str(e), traceback.format_exc())}
+        logger.summary(clog_writert.FAILED, vars(arg), json.response)
+        raise e
+
 
 ################################################################
 

@@ -12,11 +12,11 @@ from os.path import join
 import time
 import traceback
 from yaml import load
-
 import boto3
 
 
 
+import clog_writert
 import cbmc_batch
 import cbmc_ci_github
 from cbmc_ci_timer import Timer
@@ -77,7 +77,8 @@ def lambda_handler(event, context):
     """
 
     #pylint: disable=unused-argument,too-many-locals
-
+    logger = clog_writert.CLogWriter.init_lambda("cbmc_ci_start:lambda_handler", event, context)
+    logger.started()
     try:
         # Get GitHub event
         (name, id, branch, sha, is_draft) = cbmc_ci_github.parse_event(event)
@@ -101,8 +102,9 @@ def lambda_handler(event, context):
                   format(name, branch, json.dumps(event)))
             return 0
 
+        child_correlation_list = logger.create_child_correlation_list()
         codebuild = boto3.client('codebuild')
-        codebuild.start_build(
+        result = codebuild.start_build(
             projectName='Prepare-Source-Project',
             environmentVariablesOverride=[
                 {
@@ -125,11 +127,23 @@ def lambda_handler(event, context):
                     'value': str(id),
                     'type': 'PLAINTEXT'
                 },
+                {
+                    'name': 'CORRELATION_LIST',
+                    'value': json.dumps(child_correlation_list),
+                    'type': 'PLAINTEXT'
+                }
             ]
         )
+        child_task_id = result['build']['id']
+        logger.launch_child("prepare_source:source_prepare", child_task_id, child_correlation_list)
+        response = {'id' : child_task_id}
+        logger.summary(clog_writert.SUCCEEDED, event, response)
     except Exception as e:
         traceback.print_exc()
         print("Error: " + str(e))
+        response = {}
+        response['error'] = "Exception: {}; Traceback: {}".format(str(e), traceback.format_exc())
+        logger.summary(clog_writert.FAILED, event, response)
         raise e
 
     return 0
@@ -256,7 +270,7 @@ def run_batch(region, ws, src, task_name, tar_file):
 
 
 def batch_bookkeep(
-        tmp_dir, repo_id, sha, is_draft, expected, subdir, batch_name):
+        tmp_dir, repo_id, sha, is_draft, expected, subdir, batch_name, correlation_list):
     #pylint: disable=too-many-arguments
 
     # Bookkeeping about the GitHub commit for later response
@@ -265,6 +279,7 @@ def batch_bookkeep(
     bookkeep(tmp_dir, batch_name, is_draft, "is_draft.txt")
     # Bookkeeping about expected result for later response
     bookkeep(tmp_dir, batch_name, expected, "expected.txt")
+    bookkeep(tmp_dir, batch_name, correlation_list, "correlation_list.txt")
     # Update commit status to pending
     desc = "Verification Pending: CBMC Batch job " + batch_name
     cbmc_ci_github.update_status(
