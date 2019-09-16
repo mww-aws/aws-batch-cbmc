@@ -5,6 +5,7 @@
 
 import json
 import argparse
+import re
 from datetime import datetime, timezone
 
 import botocore_amazon.monkeypatch
@@ -107,9 +108,11 @@ def create_parser():
                      """)
 
     arg.add_argument('--task-log',
-                     action='store_true',
+                     action='store',
+                     nargs=2,
                      help="""
-                     Dump the log associated with the task""")
+                     Dump all log entries associated with the task. Requires the task name and the task id as arguments
+                     """)
 
     arg.add_argument('--diagnose',
                      metavar='DIAGNOSE',
@@ -619,9 +622,84 @@ def create_task_tree(client, group, correlation_id, start_time, end_time):
     textwrapper = TextWrapper(width=120)
     task_tree.pprint(textwrapper, 0)
 
-################################################################
 
-def scan(args, client):
+def generate_sorted_message_list(client, kwargs, brief=False):
+    print("kwargs: " + str(kwargs))
+    paginator = client.get_paginator('filter_log_events')
+    page_iterator = paginator.paginate(**kwargs)
+    events = []
+    print("Reading log events...")
+    for page in page_iterator:
+        events.extend(page['events'])
+        print("Reading log events...")
+    events.sort(key=lambda event: event['timestamp'])
+    messages = []
+    for event in events:
+        ts = event['timestamp']
+        messages.append((ts, event['message']))
+    return messages
+
+
+def dump_lambda_log(client, utcstart, utcend, logname, requestId):
+    if logname:
+        kwargs = {}
+        kwargs['logGroupName'] = logname
+        kwargs['startTime'] = utcstart
+        if utcend:
+            kwargs['endTime'] = utcend
+        in_lambda = False
+        messages = generate_sorted_message_list(client, kwargs)
+        for (timestamp, msg) in messages:
+            if msg.startswith('START RequestId: {}'.format(requestId)):
+                in_lambda = True
+            if in_lambda:
+                print(iso_from_time(timestamp), msg)
+            if msg.startswith('END RequestId: {}'.format(requestId)):
+                in_lambda = False
+    else:
+        print("ERROR: log name not understood")
+
+def dump_logstream(client, logname, logstream):
+    if logname:
+        kwargs = {}
+        kwargs['logGroupName'] = logname
+        kwargs['logStreamNames'] = [logstream]
+        print("kwargs: " + str(kwargs))
+        messages = generate_sorted_message_list(client, kwargs)
+        for (timestamp, msg) in messages:
+            print(iso_from_time(timestamp), msg)
+    else:
+        print("ERROR: log name not understood")
+
+
+def dump_task_log(session, client, group, utcstart, utcend, task_name, task_id):
+    if task_name == "cbmc_ci_start:lambda_handler":
+        dump_lambda_log(client, utcstart, utcend, group.invoke(), task_id)
+    elif task_name == "prepare_source:generate_cbmc_jobs":
+        stream_id = task_id.split(":")[1]
+        dump_logstream(client, group.prepare(), stream_id)
+    elif task_name == "HandleWebhookLambda":
+        dump_lambda_log(client, utcstart, utcend, group.webhook(), task_id)
+    else:
+        job_name_pattern = r"([\S]+)"
+        timestamp_pattern = r"\d{8}-\d{6}"
+        pattern = job_name_pattern + timestamp_pattern + "-([a-z]*)$"
+        res = re.search(pattern, task_name)
+        if res:
+            batch = session.client('batch')
+            result = batch.describe_jobs(jobs = [task_id])
+            jobs = result['jobs']
+            if not jobs:
+                print("ERROR: task_id {} does not have an associated log.  AWS Batch logs are disposed after 24 hours".format(task_id))
+            else:
+                log_stream = jobs[0]['container']['logStreamName']
+                dump_logstream(client, group.batch(), log_stream)
+        else:
+            print("ERROR: task_name {} does not match expected task formats".format(task_name))
+
+    ################################################################
+
+def scan(args, session, client):
     utctime = time_from_iso(args.utc)
     start = args.interval[0]
     try:
@@ -668,8 +746,10 @@ def scan(args, client):
     if args.task_tree:
         create_task_tree(client, group, args.task_tree, utcstart, utcend)
 
-    if args.diagnose:
-        diagnose(client, group, args.diagnose, utcstart, utcend)
+    if args.task_log:
+        print("task_log args: " + str(args.task_log))
+        dump_task_log(session, client, group, utcstart, utcend, args.task_log[0], args.task_log[1])
+
 
 def temp(session):
     awsbatch = session.client('batch')
@@ -689,7 +769,7 @@ def main():
         return
 
     client = session.client('logs')
-    scan(args, client)
+    scan(args, session, client)
 
     # temp(session)
 
