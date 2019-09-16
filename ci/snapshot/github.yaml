@@ -226,7 +226,7 @@ Resources:
               response = response.copy()
               print("Extracting statusCode")
               statusCode = response['statusCode']
-              response['status'] = "SUCCEEDED" if (statusCode >= 200 and statusCode <= 299) else "FAILED"
+              response['status'] = "COMPLETED:SUCCEEDED" if (statusCode >= 200 and statusCode <= 299) else "COMPLETED:FAILED"
               print("printing")
               print(summary_string(event, response))
 
