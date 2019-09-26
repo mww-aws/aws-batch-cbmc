@@ -110,31 +110,36 @@ def lambda_handler(event, context):
         child_logger.started()
 
         try:
-            if job_name_info.is_cbmc_property_batch_job and status == "SUCCEEDED":
-                # Get expected output substring
-                expected = read_from_s3(s3_dir + "/expected.txt")
-                response['expected_result'] = expected.decode('ascii')
-                # Get CBMC output
-                cbmc = read_from_s3(s3_dir + "/out/cbmc.txt")
-                if expected in cbmc:
-                    print("Expected Verification Result: {}".format(s3_dir))
-                    update_status(
-                        "success", job_dir, s3_dir, desc, repo_id, sha, is_draft)
-                    response['status'] = clog_writert.SUCCEEDED
+            if job_name_info.is_cbmc_property_batch_job:
+                print("type: {}, is_cbmc_property_batch_job: {}, job name: {}".format(job_name_info.type,
+                                                                                      job_name_info.is_cbmc_property_batch_job,
+                                                                                      job_name))
+                # write parent once we get property answer.
+                parent_logger.started()
+                parent_logger.summary(clog_writert.SUCCEEDED, event, response)
+
+                if status == "SUCCEEDED":
+                    # Get expected output substring
+                    expected = read_from_s3(s3_dir + "/expected.txt")
+                    response['expected_result'] = expected.decode('ascii')
+                    # Get CBMC output
+                    cbmc = read_from_s3(s3_dir + "/out/cbmc.txt")
+                    if expected in cbmc:
+                        print("Expected Verification Result: {}".format(s3_dir))
+                        update_status(
+                            "success", job_dir, s3_dir, desc, repo_id, sha, is_draft)
+                        response['status'] = clog_writert.SUCCEEDED
+                    else:
+                        print("Unexpected Verification Result: {}".format(s3_dir))
+                        update_status(
+                            "failure", job_dir, s3_dir, desc, repo_id, sha, is_draft)
+                        response['status'] = clog_writert.FAILED
                 else:
-                    print("Unexpected Verification Result: {}".format(s3_dir))
-                    update_status(
-                        "failure", job_dir, s3_dir, desc, repo_id, sha, is_draft)
                     response['status'] = clog_writert.FAILED
             else:
                 response['status'] = clog_writert.SUCCEEDED if (status == "SUCCEEDED") else clog_writert.FAILED
 
             child_logger.summary(response['status'], event, response)
-
-            # write parent once for all batch job completions.
-            if (job_name_info.is_cbmc_property_batch_job):
-                parent_logger.started()
-                parent_logger.summary("SUCCEEDED", event, response)
 
         except Exception as e:
             traceback.print_exc()
@@ -144,6 +149,7 @@ def lambda_handler(event, context):
             update_status("error", job_dir, s3_dir, desc, repo_id, sha, False)
             response['error'] = "Exception: {}; Traceback: {}".format(str(e), traceback.format_exc())
             parent_logger.summary(clog_writert.FAILED, event, response)
+            child_logger.summary(clog_writert.FAILED, event, response)
             raise e
 
     else:

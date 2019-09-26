@@ -242,7 +242,7 @@ def repository_basename(url):
     return repository_name(url).replace('/', '-')
 
 def clone_repository(url, srcdir):
-    cmd = ['git', 'clone', url, srcdir]
+    cmd = ['git', 'clone', '--recurse-submodules', url, srcdir]
     run_command(cmd)
 
     # Fetch the pull request data in addtion to the head data that
@@ -382,7 +382,7 @@ def generate_cbmc_jobs(src, repo_id, repo_sha, is_draft, tarfile, logger):
 
 def source_prepare():
     arg = get_arguments()
-    logger = clog_writert.CLogWriter("prepare_source:generate_cbmc_jobs", arg.task_id, arg.correlation_list)
+    logger = clog_writert.CLogWriter("prepare_source:source_prepare", arg.task_id, arg.correlation_list)
     logger.started()
     try:
         logging.basicConfig(level=getattr(logging, arg.logging.upper()),
@@ -400,7 +400,7 @@ def source_prepare():
         logger.summary(clog_writert.SUCCEEDED, vars(arg), {})
     except Exception as e:
         response = {'error' : "Exception: {}; Traceback: {}".format(str(e), traceback.format_exc())}
-        logger.summary(clog_writert.FAILED, vars(arg), json.response)
+        logger.summary(clog_writert.FAILED, vars(arg), response)
         raise e
 
 

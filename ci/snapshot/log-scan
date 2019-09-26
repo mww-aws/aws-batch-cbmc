@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import botocore_amazon.monkeypatch
 import boto3
 import time
+import logging
 from textwrap import TextWrapper
 
 
@@ -85,6 +86,7 @@ def create_parser():
                      Display brief log messages.
                      """
                     )
+
     arg.add_argument('--batch-job-failures',
                      action='store_true',
                      help="""
@@ -122,75 +124,103 @@ def create_parser():
                      """
                      )
 
-
+    arg.add_argument('--detail',
+                     type=int,
+                     default=1,
+                     help="""
+                         Level of detail to print for log information.
+                         """
+                     )
     return arg
 
 ################################################################
 
-class LogGroup:
-    """Manage AWS CloudWatch log group names"""
+################################################################
 
-    def __init__(self, client):
+class LogGroups:
+    """Manage the log groups for AWS CloudWatch logs."""
 
-        self.webhook_ = {'name': None, 'time': 0}
-        self.invoke_ = {'name': None, 'time': 0}
-        self.batch_ = {'name': None, 'time': 0}
-        self.status_ = {'name': None, 'time': 0}
-        self.prepare_ = {'name': None, 'time': 0}
+    def __init__(self, session):
+        self.client = session.client('logs')
+        # Updating a cloudwatch stack can create a second instance
+        # of a log group with a different hexadecimal suffix.
+        # We restrict attention to the most recently created log group.
+        self.log_groups = sorted(
+            self.client.describe_log_groups()['logGroups'],
+            key=lambda group: group['creationTime'],
+            reverse=True
+        )
 
-        self.logs = client.describe_log_groups()['logGroups']
+    def log_group(self, name):
+        """Log group whose name contains name as a substring."""
 
-        for desc in self.logs:
-            name = desc['logGroupName']
-            start = desc['creationTime']
-            if name.find('github-HandleWebhookLambda') > -1:
-                if self.webhook_['time'] < start:
-                    self.webhook_ = {'name': name, 'time': start}
-                continue
-            if name.find('github-InvokeBatchLambda') > -1:
-                if self.invoke_['time'] < start:
-                    self.invoke_ = {'name': name, 'time': start}
-                continue
-            if name.find('github-BatchStatusLambda') > -1:
-                if self.status_['time'] < start:
-                    self.status_ = {'name': name, 'time': start}
-                continue
-            if name.find('/aws/batch/job') > -1:
-                if self.batch_['time'] < start:
-                    self.batch_ = {'name': name, 'time': start}
-                continue
-            if name.find('/aws/codebuild/Prepare-Source-Project') > -1:
-                if self.prepare_['time'] < start:
-                    self.prepare_ = {'name': name, 'time': start}
-                continue
+        log_groups = [group['logGroupName'] for group in self.log_groups
+                      if name.lower() in group['logGroupName'].lower()]
+        if not log_groups:
+            logging.info("Failed to find log group with name %s", name)
+            return None
+        if len(log_groups) > 1:
+            logging.info("Ignoring log groups with name %s: %s",
+                         name, log_groups)
+        log_name = log_groups[0]
+        logging.info("Found log group with name %s: %s", name, log_name)
+        return log_name
 
     def webhook(self):
         """Log group for the webhook lambda."""
-        return self.webhook_['name']
+        return self.log_group('github-HandleWebhookLambda')
 
     def invoke(self):
         """Log group for the batch invocation lambda."""
-        return self.invoke_['name']
+        return self.log_group('github-InvokeBatchLambda')
 
     def status(self):
         """Log group for the batch status lambda."""
-        return self.status_['name']
+        return self.log_group('github-BatchStatusLambda')
 
     def batch(self):
         """Log group for AWS Batch."""
-        return self.batch_['name']
+        return self.log_group('/aws/batch/job')
 
     def prepare(self):
-        """Log group for prepare source project container"""
-        return self.prepare_['name']
+        """Log group for prepare source."""
+        return self.log_group('prepare')
 
-    def log_name(self, log):
-        """Log group for log containing the string log."""
-        for desc in self.logs:
-            name = desc['logGroupName']
-            if name.lower().find(log.lower()) > -1:
-                return name
-        return None
+    def matching_streams(self, log_group, pattern=None,
+                         start_timestamp=None, end_timestamp=None,
+                         text=None):
+        log_group = self.log_group(log_group)
+
+        kwargs = {"logGroupName": log_group,
+                  "startTime": start_timestamp,
+                  "endTime": end_timestamp,
+                  "filterPattern": pattern}
+        paginator = self.client.get_paginator('filter_log_events')
+        page_iterator = paginator.paginate(**kwargs)
+        logging.info("LogGroups filter log events arguments: %s", kwargs)
+
+        log_items = []
+        text = text or 'Reading logs'
+        print(text, end='', flush=True)
+        for page in page_iterator:
+            log_items.extend(page['events'])
+            print(" .", end='', flush=True)
+        print(" done (found {} items)".format(len(log_items)))
+        logging.debug("LogGroups filter log events results: %s", log_items)
+
+        log_streams = list({event['logStreamName'] for event in log_items})
+        logging.info("Returning log group: %s", log_group)
+        logging.info("Returning log streams: %s", log_streams)
+        logging.info("Returning log items: %s", log_items)
+        return log_group, log_streams, log_items
+
+    def read_stream(self, log_group, log_stream):
+        kwargs = {'logGroupName': log_group,
+                  'logStreamName': log_stream,
+                  'startFromHead': True
+                  }
+        events = self.client.get_log_events(**kwargs)
+        return events
 
 ################################################################
 
@@ -487,6 +517,73 @@ def dump_batch_status(session, status='FAILED', brief=False):
             for job in task_exited:
                 print('  '+job)
 
+###############################################################
+# From Mark's proof.py file
+###############################################################
+
+class WebHook:
+    """Parse the webhook payload."""
+
+    def __init__(self, payload):
+
+        webhook = json.loads(payload)
+        headers = {k.lower(): v for k, v in webhook["headers"].items()}
+        body = json.loads(webhook["body"])
+
+        self.event_type = headers.get('x-github-event')
+        # The repository being written to
+        self.base_name = None
+        self.base_branch = None
+        self.base_sha = None
+        # The repository being read from
+        self.head_name = None
+        self.head_branch = None
+        self.head_sha = None
+        # A url describing the event
+        self.url = None
+
+        if self.event_type == 'pull_request':
+            self.base_name = body["pull_request"]["base"]["repo"]["full_name"]
+            self.base_branch = body["pull_request"]["base"]["ref"]
+            self.base_sha = body["pull_request"]["base"]["sha"]
+            self.head_name = body["pull_request"]["head"]["repo"]["full_name"]
+            self.head_branch = body["pull_request"]["head"]["ref"]
+            self.head_sha = body["pull_request"]["head"]["sha"]
+            self.url = body["pull_request"]["html_url"]
+            return
+
+        if self.event_type == 'push':
+            self.base_name = body["repository"]["full_name"]
+            self.base_branch = body["ref"]
+            head_commit = None
+            if body.get('head_commit'):
+                head_commit = body['head_commit']
+            elif body.get('commits'):
+                head_commit = body['commits'][-1]
+            elif body.get('after'):
+                head_commit = {'id': body['after']}
+            if head_commit:
+                self.head_sha = head_commit.get('id')
+                self.url = head_commit.get('url')
+            return
+
+        raise UserWarning('Unknown event type: {}'.format(self.event_type))
+
+    def summary(self, detail=1):
+        result = {
+            'event_type': self.event_type,
+            'base_name': self.base_name,
+            'base_branch': self.base_branch,
+            'base_sha': self.base_sha,
+            'head_name': self.head_name,
+            'head_branch': self.head_branch,
+            'head_sha': self.head_sha,
+            'url': self.url
+        }
+        return result
+
+################################################################
+
 ################################################################
 # MWW additions
 ################################################################
@@ -528,7 +625,7 @@ def start_query(client, loggroupnames, query, starttime, endtime):
 
 def dump_correlation_ids(client, group, start_time, end_time):
     log_groups = [group.webhook()]
-    query = ("fields correlation_list.0, event.body "
+    query = ("fields correlation_list.0, @timestamp, event.body "
              "| filter ispresent(correlation_list.0) "
              "| filter task_name = \"HandleWebhookLambda\" "
              "| filter status like /COMPLETED/")
@@ -536,11 +633,11 @@ def dump_correlation_ids(client, group, start_time, end_time):
     result = await_query_result(client, query_id)
     list_dict = query_result_to_list_dict(result)
 
-    textwrap = TextWrapper(subsequent_indent=set_indent(21), width=120)
-    print("{0:<40} {1}".format("correlation_list", "Github commit information"))
+    textwrap = TextWrapper(subsequent_indent=set_indent(33), width=120)
+    print("{0:<40} {1:<23} {2}".format("correlation_list", "timestamp", "Github commit information"))
 
     for elem in list_dict:
-        print(textwrap.fill("{0:<40} {1}".format(elem["correlation_list.0"], str(elem.get("event.body")))))
+        print(textwrap.fill("{0:<40} {1:<23} {2}".format(elem["correlation_list.0"], elem["@timestamp"], str(elem.get("event.body")))))
 
 
 ### Task tree related stuff.
@@ -580,31 +677,44 @@ class TaskTree(KeyTree):
         return filter(lambda x: x['status'].startswith("COMPLETED"), self.elements)
 
     def timestamp_sorted_msgs(self):
-        return sorted(lambda x: x['@timestamp'], self.elements)
+        return sorted(self.elements, key=lambda x: x['@timestamp'])
 
-    def pprint(self, textwrapper, depth):
-        textwrapper.initial_indent = set_indent(depth)
-        textwrapper.subsequent_indent = set_indent(depth+1)
-        print(textwrapper.fill("Key: " + str(self.key)))
-        print(textwrapper.fill("Messages:"))
-        for elem in self.elements:
-            summary = {"task_id" : elem['task_id'], "task_name" : elem['task_name'], "status" : elem['status']}
+def pprint_tasktree(root, detail, textwrapper = TextWrapper(width=120), depth=0):
+    textwrapper.initial_indent = set_indent(depth)
+    textwrapper.subsequent_indent = set_indent(depth + 1)
+
+    if detail == 1:
+        sorted_msgs = root.timestamp_sorted_msgs()
+        if (sorted_msgs):
+            elem = list(root.timestamp_sorted_msgs())[-1]
+            summary = {"task_id": elem['task_id'], "task_name": elem['task_name'], "status": elem['status']}
             print(textwrapper.fill(str(summary)))
+    else:
+        print(textwrapper.fill("Key: " + str(root.key)))
+        print(textwrapper.fill("Messages:"))
+        for elem in root.elements:
+            summary = {"task_id": elem['task_id'], "task_name": elem['task_name'], "status": elem['status']}
+            print(textwrapper.fill(str(summary)))
+            if detail > 2:
+                print("Message body: " + str(elem))
+    if (root.children):
         print(textwrapper.fill("Children:"))
-        for child in self.children.values():
-            child.pprint(textwrapper, depth+1)
+    for child in root.children.values():
+        pprint_tasktree(child, detail, textwrapper, depth + 1)
 
 
 def dict_update_list(dict, key, val):
     dict[key] = dict.get(key, []).append(val)
 
+
 def create_task_tree(client, group, correlation_id, start_time, end_time):
     log_groups = [group.webhook(), group.invoke(), group.status(), group.prepare()]
-    query = "fields @message | filter correlation_list.0 = \"{}\" | filter ispresent(status)".format(
+    query = "fields @timestamp, @message | filter correlation_list.0 = \"{}\" | filter ispresent(status)".format(
         correlation_id)
     # print("Query: " + query)
     query_id = start_query(client, log_groups, query, start_time, end_time)
     result = await_query_result(client, query_id)
+    print(json.dumps(result))
     # print("Result: " + str(result))
     list_dict = query_result_to_list_dict(result)
     if not list_dict:
@@ -616,11 +726,10 @@ def create_task_tree(client, group, correlation_id, start_time, end_time):
     task_tree = TaskTree("root", [])
     for elem in list_dict:
         msg = json.loads(elem['@message'])
+        ts = elem['@timestamp']
         task_tree.add_element(msg['correlation_list'],
-                             msg)
-
-    textwrapper = TextWrapper(width=120)
-    task_tree.pprint(textwrapper, 0)
+                              (ts, msg))
+    return task_tree
 
 
 def generate_sorted_message_list(client, kwargs, brief=False):
@@ -709,7 +818,7 @@ def scan(args, session, client):
     utcstart = utctime - (start * 60 * 1000)
     utcend = utctime + (end * 60 * 1000) if end else None
 
-    group = LogGroup(client)
+    group = LogGroups(client)
 
     if args.errors:
         status = StatusLog(client, group.status(), utcstart, utcend)
@@ -749,7 +858,6 @@ def scan(args, session, client):
     if args.task_log:
         print("task_log args: " + str(args.task_log))
         dump_task_log(session, client, group, utcstart, utcend, args.task_log[0], args.task_log[1])
-
 
 def temp(session):
     awsbatch = session.client('batch')
