@@ -37,6 +37,7 @@ def lambda_handler(event, context):
     pprint(context)
 
     running = os.environ.get('CBMC_CI_OPERATIONAL')
+    invoke = os.environ.get('INVOKE_BATCH_LAMBDA')
     if not (running and running.strip().lower() == 'true'):
         print("Ignoring GitHub event: CBMC CI is not running")
         return {'statusCode': 200}
@@ -57,7 +58,7 @@ def lambda_handler(event, context):
             event['correlation_list'] = logger.create_child_correlation_list()
             logger.launch_child("cbmc_ci_start:lambda_handler", None, event['correlation_list'])
             result = lc.invoke(
-                FunctionName='${InvokeBatchLambda}',
+                FunctionName=invoke,
                 Payload=json.dumps(event))
             response['statusCode'] = result['StatusCode']
     except Exception as e:

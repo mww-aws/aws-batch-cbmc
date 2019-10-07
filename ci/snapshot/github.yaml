@@ -180,6 +180,7 @@ Resources:
       Environment:
         Variables:
           CBMC_CI_OPERATIONAL: True
+          INVOKE_BATCH_LAMBDA: !Sub "${InvokeBatchLambda}"
 
 
   GitHubLambdaAPI:
