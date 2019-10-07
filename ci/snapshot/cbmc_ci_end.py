@@ -34,10 +34,11 @@ class Job_name_info:
             self.job_name = job_name_match.group(1)
             self.timestamp = job_name_match.group(2)
             self.type = job_name_match.group(3)
-            self.is_cbmc_property_batch_job = (self.type == "property")
         else:
             self.is_cbmc_batch_job = False
-            self.is_cbmc_property_batch_job = False;
+
+    def is_cbmc_property_job(self):
+        return self.is_cbmc_batch_job and self.type == "property"
 
 
     @staticmethod
@@ -110,10 +111,10 @@ def lambda_handler(event, context):
         child_logger.started()
 
         try:
-            if job_name_info.is_cbmc_property_batch_job:
-                print("type: {}, is_cbmc_property_batch_job: {}, job name: {}".format(job_name_info.type,
-                                                                                      job_name_info.is_cbmc_property_batch_job,
-                                                                                      job_name))
+            if job_name_info.is_cbmc_property_job():
+                print("type: {}, is_cbmc_property_job: {}, job name: {}".format(job_name_info.type,
+                                                                                job_name_info.is_cbmc_property_job(),
+                                                                                job_name))
                 # write parent once we get property answer.
                 parent_logger.started()
                 parent_logger.summary(clog_writert.SUCCEEDED, event, response)

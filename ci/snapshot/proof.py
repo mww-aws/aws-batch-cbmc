@@ -363,13 +363,16 @@ class InvokeLog:
         # "GitHub event:"
         log_json = log_groups.read_stream(self.log_group, self.log_stream)
         messages = [event['message'] for event in log_json['events']]
-        webhooks = [i+1 for i in range(len(messages))
+        webhooks = [i+1 for i in range(len(messages)-1)
                     if messages[i].startswith('GitHub event:')]
-        payloads = [messages[i] for i in webhooks
+        payloads = [{"ts": iso_from_time(log_json['events'][i]['timestamp']), "message": messages[i]} for i in webhooks
                     if any([commit in messages[i] for commit in commit_list])]
-        assert len(payloads) == 1
+        assert len(payloads) >= 1
+        if len(payloads) > 1:
+            logging.warning("More than one invocation over time frame; choosing first record")
+
         payload = payloads[0]
-        self.webhook = WebHook(payload)
+        self.webhook = WebHook(payload['message'], payload['ts'])
 
     def summary(self, detail=1):
         result = {'webhook': self.webhook.summary()}
@@ -406,7 +409,7 @@ class InvokeLogs:
 class WebHook:
     """Parse the webhook payload."""
 
-    def __init__(self, payload):
+    def __init__(self, payload, timestamp=None):
 
         if isinstance(payload, str):
             webhook = json.loads(payload)
@@ -427,6 +430,7 @@ class WebHook:
         self.head_sha = None
         # A url describing the event
         self.url = None
+        self.timestamp = timestamp
 
         if self.event_type == 'pull_request':
             self.base_name = body["pull_request"]["base"]["repo"]["full_name"]
@@ -457,6 +461,7 @@ class WebHook:
 
     def summary(self, detail=1):
         result = {
+            'timestamp': self.timestamp,
             'event_type': self.event_type,
             'base_name': self.base_name,
             'base_branch': self.base_branch,
@@ -730,7 +735,7 @@ class CorrelationIds:
                  "| filter ispresent(correlation_list.0) "
                  "| filter task_name = \"HandleWebhookLambda\" "
                  "| filter status like /COMPLETED/")
-        logging.info('starting correlation ids query ', end = '', flush=True)
+        logging.info('starting correlation ids query ')
         query_id = start_query(client, log_groups, query, start_time, end_time)
         result = await_query_result(client, query_id)
         self.correlation_ids = query_result_to_list_dict(result)
