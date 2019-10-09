@@ -55,14 +55,15 @@ def lambda_handler(event, context):
             response['body'] = 'pong'
             response['statusCode'] = 200
         else:
-#            lc = boto3.client('lambda')
+            lc = boto3.client('lambda')
             event['correlation_list'] = logger.create_child_correlation_list()
             logger.launch_child("cbmc_ci_start:lambda_handler", None, event['correlation_list'])
-            cbmc_ci_start.lambda_handler(event, context)
-#            result = lc.invoke(
-#                FunctionName=invoke,
-#                Payload=json.dumps(event))
-            response['statusCode'] = 200
+#            cbmc_ci_start.lambda_handler(event, context)
+#            response['statusCode'] = 200
+            result = lc.invoke(
+                FunctionName=invoke,
+                Payload=json.dumps(event))
+            response['statusCode'] = result['statusCode']
     except Exception as e:
         response['statusCode'] = 500
         traceback.print_exc()
