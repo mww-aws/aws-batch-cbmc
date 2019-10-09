@@ -6,6 +6,7 @@ import traceback
 from pprint import pprint
 import clog_writert
 from clog_writert import CLogWriter
+import cbmc_ci_start
 
 import boto3
 
@@ -54,13 +55,14 @@ def lambda_handler(event, context):
             response['body'] = 'pong'
             response['statusCode'] = 200
         else:
-            lc = boto3.client('lambda')
+#            lc = boto3.client('lambda')
             event['correlation_list'] = logger.create_child_correlation_list()
             logger.launch_child("cbmc_ci_start:lambda_handler", None, event['correlation_list'])
-            result = lc.invoke(
-                FunctionName=invoke,
-                Payload=json.dumps(event))
-            response['statusCode'] = result['StatusCode']
+            cbmc_ci_start.lambda_handler(json.dumps(event), context)
+#            result = lc.invoke(
+#                FunctionName=invoke,
+#                Payload=json.dumps(event))
+            response['statusCode'] = 200
     except Exception as e:
         response['statusCode'] = 500
         traceback.print_exc()

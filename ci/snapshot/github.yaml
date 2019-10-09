@@ -181,6 +181,9 @@ Resources:
         Variables:
           CBMC_CI_OPERATIONAL: True
           INVOKE_BATCH_LAMBDA: !Sub "${InvokeBatchLambda}"
+          PROJECT_NAME: !Ref ProjectName
+          S3_BKT: !Ref S3BucketName
+          PKG_BKT: !Sub "${S3BucketName}/snapshot/snapshot-${SnapshotID}"
 
 
   GitHubLambdaAPI:
