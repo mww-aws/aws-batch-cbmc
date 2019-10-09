@@ -58,7 +58,7 @@ def lambda_handler(event, context):
 #            lc = boto3.client('lambda')
             event['correlation_list'] = logger.create_child_correlation_list()
             logger.launch_child("cbmc_ci_start:lambda_handler", None, event['correlation_list'])
-            cbmc_ci_start.lambda_handler(json.dumps(event), context)
+            cbmc_ci_start.lambda_handler(event, context)
 #            result = lc.invoke(
 #                FunctionName=invoke,
 #                Payload=json.dumps(event))
