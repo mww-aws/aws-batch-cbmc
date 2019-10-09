@@ -165,16 +165,6 @@ Resources:
                   - cloudwatch:PutMetricData
                 Effect: Allow
                 Resource: "*"
-       - PolicyName: !Sub "batch-lambda-policy-${AWS::Region}"
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Effect: Allow
-                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
               - Action:
                   - s3:GetObject
                   - s3:PutObject
@@ -195,17 +185,12 @@ Resources:
                   - secretsmanager:GetSecretValue
                 Effect: Allow
                 Resource:
-                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:GitHubSecret-??????"
                   - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:GitHubCommitStatusPAT-??????"
-              - Action:
-                  - cloudwatch:PutMetricData
-                Effect: Allow
-                Resource: "*"
               - Action:
                   - codebuild:StartBuild
                 Effect: Allow
                 Resource: "*"
-                
+
   HandleWebhookLambda:
     Type: AWS::Lambda::Function
     Properties:
