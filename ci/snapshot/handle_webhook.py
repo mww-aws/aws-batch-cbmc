@@ -58,17 +58,14 @@ def lambda_handler(event, context):
             lc = boto3.client('lambda')
             event['correlation_list'] = logger.create_child_correlation_list()
             logger.launch_child("cbmc_ci_start:lambda_handler", None, event['correlation_list'])
-#            cbmc_ci_start.lambda_handler(event, context)
-#            response['statusCode'] = 200
-            result = lc.invoke(
-                FunctionName=invoke,
-                Payload=json.dumps(event))
-            response['statusCode'] = result['statusCode']
+            # MWW: Originally, these two aspects were in separate lambdas; there may be a future reason to split them.
+            # I have done a minimal change here to knit them together.
+            cbmc_ci_start.lambda_handler(event, context)
+            response['statusCode'] = 200
     except Exception as e:
         response['statusCode'] = 500
         traceback.print_exc()
         print('Error: ' + str(e))
-        # raise e
 
     print("response = ")
     print(json.dumps(response))
