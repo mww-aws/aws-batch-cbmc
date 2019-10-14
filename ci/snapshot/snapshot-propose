@@ -106,6 +106,12 @@ def create_parser():
                      action='store_true',
                      help='Show the current snapshot in the prod account'
                     )
+
+    arg.add_argument('--current-snapshot-rename-project',
+                     metavar='NAME',
+                     help='Show the current snapshot in the prod account with name NAME'
+                    )
+
     arg.add_argument('--show-last-snapshot',
                      metavar='N',
                      type=int,
@@ -442,6 +448,16 @@ def initial(args, resources):
 def main():
     args = parse_args()
     resources = aws_resources(args)
+
+    if args.current_snapshot_rename_project:
+        current = json.loads(get_current_snapshot_json(**resources[Act.prod]))
+        current["parameters"]["ProjectName"] = args.current_snapshot_rename_project
+        print(json.dumps(current, indent=2))
+        sys.exit()
+
+    if args.show_current_snapshot:
+        print(get_current_snapshot_json(**resources[Act.prod]))
+        sys.exit()
 
     if args.show_current_snapshot:
         print(get_current_snapshot_json(**resources[Act.prod]))

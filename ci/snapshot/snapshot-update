@@ -40,6 +40,9 @@ def create_parser():
                      help='Updating a production account.'
                     )
 
+    arg.add_argument('--current-snapshot-rename-project',
+                     metavar='NAME',
+                     help='Use current snapshot but rename the project id to NAME')
 
     arg.add_argument('--cbmc-sha',
                      metavar='SHA',
@@ -74,7 +77,6 @@ def create_parser():
                      action='store_true',
                      help='Update only the batch packages (but not docker).'
                     )
-
 
     arg.add_argument('--canary',
                      action='store_true',
@@ -124,7 +126,8 @@ def snapshot_propose_args(args):
         '--build-profile': args.build_profile,
         '--cbmc-sha': args.cbmc_sha,
         '--batch-sha': args.batch_sha,
-        '--viewer-sha': args.viewer_sha
+        '--viewer-sha': args.viewer_sha,
+        '--current-snapshot-rename-project': args.current_snapshot_rename_project
     }
     booleans = {
         '--no-cbmc-update': args.no_cbmc_update,
