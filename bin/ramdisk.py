@@ -24,9 +24,8 @@ def mount_ramdisk(folder, megabytes=1024):
     """
     print("mounting RAM disk at location: {} of size: {}".format(folder, megabytes))
     os.makedirs(folder)
-    cmd = ['sudo',
-           'mount', '-t', 'tmpfs', '-o', 'size={}M'.format(megabytes), 'tmpfs',
-           folder]
+    print("Does directory {} exist? {}".format(folder, os.path.isdir(folder)))
+    cmd = ['mount', '-t', 'tmpfs', '-o', 'size={}M'.format(megabytes), 'tmpfs', folder]
     subprocess.check_call(cmd)
 
 def unmount_ramdisk(folder):
@@ -36,8 +35,7 @@ def unmount_ramdisk(folder):
     :return:
     """
     print("unmounting RAM disk at location: {} of size: {}".format(folder, megabytes))
-    cmd = ['sudo',
-           'umount', folder]
+    cmd = ['umount', folder]
     subprocess.check_call(cmd)
 
 def mount_ramdisks(folders, megabytes=1024):
