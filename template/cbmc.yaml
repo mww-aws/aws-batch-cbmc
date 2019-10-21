@@ -153,6 +153,7 @@ Resources:
         Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/cbmc:ubuntu14-gcc${ImageTagSuffix}
         Vcpus: 2
         Memory: 16000
+        Privileged: True
       RetryStrategy:
         Attempts: 1
 
@@ -166,6 +167,7 @@ Resources:
         Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/cbmc:ubuntu16-gcc${ImageTagSuffix}
         Vcpus: 2
         Memory: 16000
+        Privileged: True
       RetryStrategy:
         Attempts: 1
 
