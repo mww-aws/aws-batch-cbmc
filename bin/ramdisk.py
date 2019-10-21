@@ -22,6 +22,7 @@ def mount_ramdisk(folder, megabytes=1024):
 
     Mount a ramdisk of a size given by megabytes on a folder.
     """
+    print("mounting RAM disk at location: {} of size: {}".format(folder, megabytes))
     os.makedirs(folder)
     cmd = ['sudo',
            'mount', '-t', 'tmpfs', '-o', 'size={}M'.format(megabytes), 'tmpfs',
@@ -34,6 +35,7 @@ def unmount_ramdisk(folder):
     :param folder:
     :return:
     """
+    print("unmounting RAM disk at location: {} of size: {}".format(folder, megabytes))
     cmd = ['sudo',
            'umount', folder]
     subprocess.check_call(cmd)

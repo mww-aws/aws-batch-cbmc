@@ -20,7 +20,7 @@ def boot():
     opts = options.docker_options()
     print("Booting with options " + json.dumps(opts))
 
-    RAM_DISK_DIRS = ['cbmc-batch', 'cbmc', 'cbmc-viewer',
+    RAM_DISK_DIRS = [u'/cbmc-batch', u'/cbmc', u'/cbmc-viewer',
                      opts['blddir'], opts['wsdir'], opts['srcdir'], opts['outdir']]
     RAM_DISK_SIZE = 3072
     print("Creating RAM disks: {} with size {} ".format(str(RAM_DISK_DIRS), RAM_DISK_SIZE))
