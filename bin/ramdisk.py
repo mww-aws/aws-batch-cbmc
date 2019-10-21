@@ -26,7 +26,7 @@ def mount_ramdisk(folder, megabytes=1024):
     cmd = ['sudo',
            'mount', '-t', 'tmpfs', '-o', 'size={}M'.format(megabytes), 'tmpfs',
            folder]
-    subprocess.run(cmd, check=True)
+    subprocess.check_call(cmd)
 
 def unmount_ramdisk(folder):
     """
@@ -36,7 +36,7 @@ def unmount_ramdisk(folder):
     """
     cmd = ['sudo',
            'umount', folder]
-    subprocess.run(cmd, check=True)
+    subprocess.check_call(cmd)
 
 def mount_ramdisks(folders, megabytes=1024):
     """Mount ramdisks on folders.
@@ -64,7 +64,7 @@ def unmount_ramdisks(folders):
 def tasks_using_ramdisk(folder):
     cmd = ['sudo',
            'lsof', '-n', folder]
-    subprocess.run(cmd, check=True)
+    subprocess.check_call(cmd)
 
 def tasks_using_ramdisks(folders):
     folders = [os.path.abspath(folder) for folder in folders]
