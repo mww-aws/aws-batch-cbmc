@@ -46,7 +46,8 @@ def get_buckets(opts, copysrc=True):
             s3.copy_object_to_file(
                 opts['srctarfile'], tarfile, region=opts['region'])
             try:
-                os.makedirs(tardir)
+                if not os.path.isdir(tardir):
+                    os.makedirs(tardir)
             except OSError:
                 abort("Failed to make directory {}".format(tardir))
             cmd = ['tar', 'fx', tarfile, '-C', tardir]

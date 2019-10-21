@@ -24,7 +24,6 @@ def mount_ramdisk(folder, megabytes=1024):
     """
     print("mounting RAM disk at location: {} of size: {}".format(folder, megabytes))
     os.makedirs(folder)
-    print("Does directory {} exist? {}".format(folder, os.path.isdir(folder)))
     cmd = ['mount', '-t', 'tmpfs', '-o', 'size={}M'.format(megabytes), 'tmpfs', folder]
     subprocess.check_call(cmd)
 
