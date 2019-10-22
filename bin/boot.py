@@ -30,11 +30,11 @@ def boot():
         package.copy('cbmc-batch', opts['pkgbucket'], opts['batchpkg'])
         package.install('cbmc-batch', opts['batchpkg'], 'cbmc-batch')
         package.launch('cbmc-batch', 'docker.py', ['--jsons', json.dumps(opts)])
-    finally:
-        print("Tasks using RAM disks: ")
-        ramdisk.tasks_using_ramdisks(RAM_DISK_DIRS)
-        print("Unmounting RAM disks")
-        ramdisk.unmount_ramdisks(RAM_DISK_DIRS)
+    # finally:
+    #     print("Tasks using RAM disks: ")
+    #     ramdisk.tasks_using_ramdisks(RAM_DISK_DIRS)
+    #     print("Unmounting RAM disks")
+    #     ramdisk.unmount_ramdisks(RAM_DISK_DIRS)
 
 if __name__ == "__main__":
     boot()
