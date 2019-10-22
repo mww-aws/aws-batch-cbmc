@@ -24,12 +24,12 @@ def boot():
                      opts['blddir'], opts['wsdir'], opts['srcdir'], opts['outdir']]
     RAM_DISK_SIZE = 3072
     print("Creating RAM disks: {} with size {} ".format(str(RAM_DISK_DIRS), RAM_DISK_SIZE))
-    try:
-        ramdisk.mount_ramdisks(RAM_DISK_DIRS, RAM_DISK_SIZE)
+#    try:
+    ramdisk.mount_ramdisks(RAM_DISK_DIRS, RAM_DISK_SIZE)
 
-        package.copy('cbmc-batch', opts['pkgbucket'], opts['batchpkg'])
-        package.install('cbmc-batch', opts['batchpkg'], 'cbmc-batch')
-        package.launch('cbmc-batch', 'docker.py', ['--jsons', json.dumps(opts)])
+    package.copy('cbmc-batch', opts['pkgbucket'], opts['batchpkg'])
+    package.install('cbmc-batch', opts['batchpkg'], 'cbmc-batch')
+    package.launch('cbmc-batch', 'docker.py', ['--jsons', json.dumps(opts)])
     # finally:
     #     print("Tasks using RAM disks: ")
     #     ramdisk.tasks_using_ramdisks(RAM_DISK_DIRS)
