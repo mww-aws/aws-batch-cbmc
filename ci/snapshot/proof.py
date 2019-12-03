@@ -623,7 +623,7 @@ class ProofResult:
         self.proof = proof
         client = session.client('s3')
 
-        self.bucket = cbmc_bucket(client)
+        self.bucket = proof_bucket(client)
         logging.info('Scanning CBMC proof logs for {} .'.format(proof))
         with tempfile.TemporaryDirectory() as tmpdir:
             read_file = lambda name: cbmc_file(client, self.bucket,
@@ -677,6 +677,13 @@ def cbmc_bucket(client):
     assert len(cbmc_buckets) == 1
     return cbmc_buckets[0]
 
+def proof_bucket(client):
+    buckets = [bkt['Name'] for bkt in client.list_buckets()['Buckets']]
+    proof_buckets = [bkt for bkt in buckets if bkt.endswith(('-proofs'))]
+    proof_buckets = [bkt for bkt in proof_buckets if bkt]
+    assert len(proof_buckets) == 1
+    return proof_buckets[0]
+
 def cbmc_file(client, bucket, proof, filename, tmpdir):
     try:
         key = '{}/out/{}'.format(proof, filename)
@@ -686,7 +693,7 @@ def cbmc_file(client, bucket, proof, filename, tmpdir):
         with open(path) as data:
             return data.read().splitlines()
     except botocore.exceptions.ClientError:
-        logging.error("Unable to read S3 key:  " + str(key))
+        logging.error("Unable to read S3 bucket/key: {}/{}  ".format(str(bucket), str(key)))
         return None
 
 ################################################################
@@ -1037,6 +1044,7 @@ def main():
         logging.info("Examining proofs: " + str(args.proofs))
         prepare = PrepareLogs(log_groups, args.proofs, start, end)
         proof_results = ProofResults(session, args.proofs)
+        invoke = InvokeLogs(log_groups, prepare.commits, start, end)
 
         summary = dict(summary, **invoke.summary(args.detail))
         summary = dict(summary, **prepare.summary(args.detail))
