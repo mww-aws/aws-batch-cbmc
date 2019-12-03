@@ -623,7 +623,7 @@ class ProofResult:
         self.proof = proof
         client = session.client('s3')
 
-        self.bucket = proof_bucket(client)
+        self.bucket = proof_bucket(session, client)
         logging.info('Scanning CBMC proof logs for {} .'.format(proof))
         with tempfile.TemporaryDirectory() as tmpdir:
             read_file = lambda name: cbmc_file(client, self.bucket,
@@ -670,13 +670,7 @@ class ProofResults:
         return {'CBMCLogs': report}
 
 
-def cbmc_bucket(client):
-    buckets = [bkt['Name'] for bkt in client.list_buckets()['Buckets']]
-    cbmc_buckets = [bkt for bkt in buckets if bkt.endswith(('-cbmc', '-ci'))]
-    cbmc_buckets = [bkt for bkt in cbmc_buckets if bkt]
-    assert len(cbmc_buckets) == 1
-    return cbmc_buckets[0]
-
+#TODO: get bucket name from stack outputs (after Jonathan adds it).
 def proof_bucket(client):
     buckets = [bkt['Name'] for bkt in client.list_buckets()['Buckets']]
     proof_buckets = [bkt for bkt in buckets if bkt.endswith(('-proofs'))]
