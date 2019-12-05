@@ -623,7 +623,7 @@ class ProofResult:
         self.proof = proof
         client = session.client('s3')
 
-        self.bucket = proof_bucket(session, client)
+        self.bucket = proof_bucket(client)
         logging.info('Scanning CBMC proof logs for {} .'.format(proof))
         with tempfile.TemporaryDirectory() as tmpdir:
             read_file = lambda name: cbmc_file(client, self.bucket,

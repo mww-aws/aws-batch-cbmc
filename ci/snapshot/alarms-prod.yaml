@@ -188,7 +188,7 @@ Resources:
               ArnEquals:
                 "aws:SourceArn": !GetAtt CodeBuildErrorAlarm.Arn
       Topics:
-        - !Ref SnsVerificationTopic
+        - !Ref SnsCodeBuildTopic
 
   CanaryEventTopicPolicy:
     Type: AWS::SNS::TopicPolicy
