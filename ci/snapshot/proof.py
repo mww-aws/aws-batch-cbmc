@@ -370,7 +370,13 @@ class InvokeLog:
         payloads = [{"ts": iso_from_time(log_json['events'][i]['timestamp']), "message": messages[i]} for i in webhooks
                     if (any([commit in messages[i] for commit in commit_list]) if commit_list else True)]
         assert len(payloads) >= 1
-        self.webhooks = [WebHook(payload['message'], payload['ts']) for payload in payloads]
+        self.webhooks = []
+        for payload in payloads:
+            try:
+                webhook = WebHook(payload['message'], payload['ts'])
+                self.webhooks.append(webhook)
+            except:
+                logging.error(f"Unable to parse webhook at time {payload['ts']}; most likely it is too large to fit in a cloudwatch event")
 
 
     def summary(self, detail=1):
@@ -415,6 +421,8 @@ class WebHook:
     def __init__(self, payload, timestamp=None):
 
         if isinstance(payload, str):
+            # Note: may throw exception if payload is mal-formed
+            # as can happen when a message gets truncated.
             webhook = json.loads(payload)
         else:
             webhook = payload
@@ -749,10 +757,19 @@ class CorrelationIds:
         for elem in self.correlation_ids:
             dict = {}
             message = json.loads(elem['@message'])
-            webhook = WebHook(message['event'])
+            try:
+                webhook = WebHook(message['event'])
+                summary = webhook.summary(detail)
+            except:
+                logging.error(f"""
+                    When constructing correlation ids, Unable to parse webhook at time {elem['@timestamp']}; 
+                    most likely it is too large to fit in a cloudwatch event.
+                """)
+                summary = {}
             dict = {"correlation_id" : elem['correlation_list.0'],
                     "timestamp" : elem['@timestamp'],
-                    "webhook" : webhook.summary(detail)}
+                    "webhook" : summary}
+
             summary_list.append(dict)
         summary_list.sort(key=lambda elem: elem['timestamp'])
         return {"correlation_ids" : summary_list}
