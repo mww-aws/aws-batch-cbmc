@@ -370,13 +370,7 @@ class InvokeLog:
         payloads = [{"ts": iso_from_time(log_json['events'][i]['timestamp']), "message": messages[i]} for i in webhooks
                     if (any([commit in messages[i] for commit in commit_list]) if commit_list else True)]
         assert len(payloads) >= 1
-        self.webhooks = []
-        for payload in payloads:
-            try:
-                webhook = WebHook(payload['message'], payload['ts'])
-                self.webhooks.append(webhook)
-            except:
-                logging.error(f"Unable to parse webhook at time {payload['ts']}; most likely it is too large to fit in a cloudwatch event")
+        self.webhooks = generate_webhooks(payloads)
 
 
     def summary(self, detail=1):
@@ -414,6 +408,21 @@ class InvokeLogs:
         return {'ProofInvocations': invocations}
 
 ################################################################
+
+def parse_json_fail(field_name, ts):
+    logging.error(
+        f"Unable to parse {field_name} at time {ts}; most likely it is too large to fit in a cloudwatch event")
+
+
+def generate_webhooks(payloads):
+    webhooks = []
+    for payload in payloads:
+        try:
+            webhook = WebHook(payload['message'], payload['ts'])
+            webhooks.append(webhook)
+        except:
+            parse_json_fail('webhook', payload['ts'])
+    return webhooks
 
 class WebHook:
     """Parse the webhook payload."""
@@ -756,18 +765,16 @@ class CorrelationIds:
         summary_list = []
         for elem in self.correlation_ids:
             dict = {}
-            message = json.loads(elem['@message'])
             try:
+                timestamp = elem['@timestamp']
+                message = json.loads(elem['@message'])
                 webhook = WebHook(message['event'])
                 summary = webhook.summary(detail)
             except:
-                logging.error(f"""
-                    When constructing correlation ids, Unable to parse webhook at time {elem['@timestamp']}; 
-                    most likely it is too large to fit in a cloudwatch event.
-                """)
+                parse_json_fail('message', timestamp)
                 summary = {}
             dict = {"correlation_id" : elem['correlation_list.0'],
-                    "timestamp" : elem['@timestamp'],
+                    "timestamp" : timestamp,
                     "webhook" : summary}
 
             summary_list.append(dict)
@@ -1015,8 +1022,13 @@ def create_task_tree(group, correlation_id, start_time, end_time):
     # if we sort the keys in the dict, we have a depth-first view of the tree.
     task_tree = TaskTree("fakeroot")
     for elem in list_dict:
-        msg = json.loads(elem['@message'])
         ts = elem['@timestamp']
+        try:
+            msg = json.loads(elem['@message'])
+        except:
+            parse_json_fail('@message', elem['@timestamp'])
+            msg = {}
+
         task_tree.add_element(msg['correlation_list'], {'ts': ts, 'msg': msg})
 
     # get 'real' root.
