@@ -303,11 +303,18 @@ def prepare_repository(log_json):
 def prepare_commit(log_json):
     # Log message format is
     # INFO: Running "git checkout COMMIT" in "DIR"
-    messages = [event['message'].strip() for event in log_json['events']
+    merge_messages = [event['message'].strip() for event in log_json['events']
+                if event['message'].startswith('INFO: Running "git merge')]
+    checkout_messages = [event['message'].strip() for event in log_json['events']
                 if event['message'].startswith('INFO: Running "git checkout')]
-    assert len(messages) == 1
-    match = re.search('"git checkout (.+)" in ".+"', messages[0])
-    commit = match.group(1)
+    assert len(merge_messages) + len(checkout_messages) == 1
+
+    if checkout_messages:
+        match = re.search('"git checkout (.+)" in ".+"', checkout_messages[0])
+        commit = match.group(1)
+    elif merge_messages:
+        match = re.search('"git merge --no-edit (.+)" in ".+"', merge_messages[0])
+        commit = match.group(1)
     logging.info('Found commit in prepare log:  %s', commit)
     return commit
 
@@ -651,6 +658,7 @@ class ProofResult:
                 'coverage': read_file('coverage.xml'),
                 'report': read_file('report.txt')
             }
+            self.correlation_id = correlation_id_file(client, self.bucket, proof, 'correlation_list.txt', tmpdir)
             self.error = {
                 'build': read_file('build-err.txt'),
                 'property': read_file('cbmc-err.txt'),
@@ -665,6 +673,7 @@ class ProofResult:
 
     def summary(self, detail=1):
         result = {
+            'correlation_id': self.correlation_id,
             'proof_status': self.proof_status,
             'error': self.error
         }
@@ -707,12 +716,25 @@ def cbmc_file(client, bucket, proof, filename, tmpdir):
         logging.error("Unable to read S3 bucket/key: {}/{}  ".format(str(bucket), str(key)))
         return None
 
+
 ################################################################
 
 ################################################################
 # MWW additions
 ################################################################
 import time
+
+def correlation_id_file(client, bucket, proof, filename, tmpdir):
+    try:
+        key = '{}/{}'.format(proof, filename)
+        logging.info("Attempting to read S3 key: " + str(key))
+        path = os.path.join(tmpdir, filename)
+        client.download_file(bucket, key, path)
+        with open(path) as data:
+            return json.loads(data.read())[0]
+    except botocore.exceptions.ClientError:
+        logging.error("Unable to read S3 bucket/key: {}/{}  ".format(str(bucket), str(key)))
+        return None
 
 def await_query_result(client, query_id):
     kwargs = {'queryId': query_id}
@@ -1037,11 +1059,6 @@ def create_task_tree(group, correlation_id, start_time, end_time):
 
 ###########################################################
 
-# Couple of Qs:
-# Make proof queries return sets unless they are given a task id.  Simple; split them into multiple classes.
-#
-# Similarly with proofs.
-#
 
 def main():
     args = create_parser().parse_args()
@@ -1067,9 +1084,13 @@ def main():
         logging.info("Examining proofs: " + str(args.proofs))
         prepare = PrepareLogs(log_groups, args.proofs, start, end)
         proof_results = ProofResults(session, args.proofs)
-        invoke = InvokeLogs(log_groups, prepare.commits, start, end)
 
-        summary = dict(summary, **invoke.summary(args.detail))
+        correlation_ids = CorrelationIds(session, log_groups, start, end)
+        summary = dict(summary, **correlation_ids.summary(args.detail))
+        if not correlation_ids.correlation_ids:
+            invoke = InvokeLogs(log_groups, None, start, end)
+            summary = dict(summary, **invoke.summary(args.detail))
+
         summary = dict(summary, **prepare.summary(args.detail))
         summary = dict(summary, **proof_results.summary(args.detail))
 
