@@ -736,12 +736,16 @@ def correlation_id_file(client, bucket, proof, filename, tmpdir):
         logging.error("Unable to read S3 bucket/key: {}/{}  ".format(str(bucket), str(key)))
         return None
 
+MAX_QUERY_RESULTS = 10000
+
 def await_query_result(client, query_id):
     kwargs = {'queryId': query_id}
     result = client.get_query_results(**kwargs)
     while result['status'] in set(['Scheduled', 'Running']):
         time.sleep(0.5)
         result = client.get_query_results(**kwargs)
+    if len(result['results']) == MAX_QUERY_RESULTS:
+        logging.warning(f'Query results truncated for query id: {query_id}')
     logging.info(" done")
     return result
 
@@ -757,11 +761,10 @@ def query_result_to_list_dict(result):
 
 
 def start_query(client, loggroupnames, query, starttime, endtime):
-    # print("limiting query to the first 1000 results")
     kwargs = {'logGroupNames': loggroupnames,
               'startTime': starttime,
               'queryString': query,
-              'limit': 1000}
+              'limit': MAX_QUERY_RESULTS}
     if endtime:
         kwargs['endTime'] = endtime
 
@@ -893,10 +896,12 @@ def time_elapsed_in_ms(task_tree):
 
 class TaskTreeFailureSummary():
     def __init__(self, session, task_tree, log_groups, start, end, max_log_entries):
+        def sort_event(the_list):
+            return sorted(the_list, key=lambda event: event['msg']['task_name'])
         self.session = session
-        self.failed_events = task_tree.tree_failed_events()
-        self.incomplete_events = task_tree.tree_incomplete_events()
-        self.succeeded_events = task_tree.tree_succeeded_events()
+        self.failed_events = sort_event(task_tree.tree_failed_events())
+        self.incomplete_events = sort_event(task_tree.tree_incomplete_events())
+        self.succeeded_events = sort_event(task_tree.tree_succeeded_events())
         self.log_groups = log_groups
         self.start = start
         self.end = end
