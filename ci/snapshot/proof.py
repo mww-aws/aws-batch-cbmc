@@ -745,7 +745,7 @@ def await_query_result(client, query_id):
         time.sleep(0.5)
         result = client.get_query_results(**kwargs)
     if len(result['results']) == MAX_QUERY_RESULTS:
-        logging.warning(f'Query results truncated for query id: {query_id}')
+        logging.warning(f'Query results may be truncated for query id: {query_id}')
     logging.info(" done")
     return result
 
