@@ -87,6 +87,7 @@ def lambda_handler(event, context):
         # do nothing in case this was a push deleting a branch
         if sha is None:
             print("Ignoring event: " + json.dumps(event))
+            logger.summary(clog_writert.SUCCEEDED, event, {'result': 'Ignoring event with empty SHA'})
             return 0
 
         to_check = [
@@ -99,8 +100,9 @@ def lambda_handler(event, context):
         branch_tail = branch.split('/')[-1]
 
         if (name == "aws/amazon-freertos" and branch_tail not in to_check):
-            print("Ignoring event on repository {} and branch {}: {}".
-                  format(name, branch, json.dumps(event)))
+            result = "Ignoring event on repository {} and branch {}: {}".format(name, branch, json.dumps(event))
+            print(result)
+            logger.summary(clog_writert.SUCCEEDED, event, {'result': result})
             return 0
 
         child_correlation_list = logger.create_child_correlation_list()
