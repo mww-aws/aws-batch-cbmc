@@ -53,14 +53,13 @@ def create_parser():
                      nargs='+',
                      metavar='M',
                      type=int,
-                     default=[20, 60],
+                     default=[70, 20],
                      help="""
                      The interval of time about UTC used to search the
-                     logs.  Use --interval A to begin the search A
-                     minutes before UTC. Use
+                     logs.  Use 
                      --interval A B to begin the search A minutes
                      before UTC and end B minutes after UTC
-                     (default: --interval 20 60).
+                     (default: --interval 70 20).
                      """
                     )
 
@@ -81,7 +80,8 @@ def create_parser():
     arg.add_argument('--diagnose',
                      action="store_true",
                      help="""
-                     Attempts to localize failure within a proof (requires --correlation_id). 
+                     Attempts to localize failure within a proof (if no --correlation_id,
+                     runs on all executions within the interval). 
                      """
                     )
 
@@ -568,14 +568,14 @@ class ProofBatchLog:
                     break
 
         self.log = {}
-        for step in PROOF_STEP_NAMES:
+        for step in self.log_stream.keys():
             self.log[step] = ProofStepBatchLog(
                 log_groups, make_proof_step(step),
                 self.log_group, self.log_stream[step])
 
     def summary(self, detail=1):
         result = {}
-        for step in PROOF_STEP_NAMES:
+        for step in self.log_stream.keys():
             result[self.log[step].proof_step] = self.log[step].summary(detail)
         return {'BatchLogs': {self.proof: result}}
 
@@ -786,6 +786,9 @@ class CorrelationIds:
         result = await_query_result(client, query_id)
         self.correlation_ids = query_result_to_list_dict(result)
 
+    def root_ids(self):
+        return [elem['correlation_list.0'] for elem in self.correlation_ids]
+
     def summary(self, detail):
         summary_list = []
         for elem in self.correlation_ids:
@@ -892,7 +895,8 @@ def compute_tree_time(task_tree, minmax, val):
 def time_elapsed_in_ms(task_tree):
     min_val = compute_tree_time(task_tree, min, None)
     max_val = compute_tree_time(task_tree, max, None)
-    return max_val - min_val
+    difference = max_val - min_val if (min_val and max_val) else 0
+    return difference
 
 class TaskTreeFailureSummary():
     def __init__(self, session, task_tree, log_groups, start, end, max_log_entries):
@@ -1114,6 +1118,14 @@ def main():
         if not correlation_ids.correlation_ids:
             invoke = InvokeLogs(log_groups, None, start, end)
             summary = dict(summary, **invoke.summary(args.detail))
+        if args.diagnose:
+            failure_summaries = {}
+            for root_id in correlation_ids.root_ids():
+                task_tree = create_task_tree(log_groups, root_id, start, end)
+                failures = TaskTreeFailureSummary(session, task_tree, log_groups, start, end, args.max_log_entries)
+                failure_summaries[root_id] = failures.summary(args.detail, args.diagnose)
+            summary['diagnoses'] = failure_summaries
+
     if (args.pprint):
         print(json.dumps(summary, indent=2))
     else:
