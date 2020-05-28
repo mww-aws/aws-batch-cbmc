@@ -49,11 +49,20 @@ def create_parser():
                      such as YYYY-MM-DDTHH:MM:SS.
                      """
                     )
+
+    # the default interval is 70 minutes back, 20 minutes forward.
+    # Most of the time, we are using this tool to diagnose proof failures with a timestamp
+    # associated with the failure.  Currently, proofs run in 60 minutes or less,
+    # so the backwards interval (70) should be sufficient to capture the CI runs that
+    # contain the error.  For the 20 minutes ahead, sometimes the errors do not
+    # terminate the CI run; to get the full picture, we allow a 20 minute lookahead.
+    default_interval = [70, 20]
+
     arg.add_argument('--interval',
                      nargs='+',
                      metavar='M',
                      type=int,
-                     default=[70, 20],
+                     default=default_interval,
                      help="""
                      The interval of time about UTC used to search the
                      logs.  Use 
@@ -568,14 +577,14 @@ class ProofBatchLog:
                     break
 
         self.log = {}
-        for step in self.log_stream.keys():
+        for step, log_stream in self.log_stream.items():
             self.log[step] = ProofStepBatchLog(
                 log_groups, make_proof_step(step),
-                self.log_group, self.log_stream[step])
+                self.log_group, log_stream)
 
     def summary(self, detail=1):
         result = {}
-        for step in self.log_stream.keys():
+        for step in self.log_stream:
             result[self.log[step].proof_step] = self.log[step].summary(detail)
         return {'BatchLogs': {self.proof: result}}
 
@@ -777,6 +786,9 @@ class CorrelationIds:
     def __init__(self, session, group, start_time, end_time):
         client = session.client("logs")
         log_groups = [group.webhook()]
+
+        # correlation_list.0 is kind of an odd key, but it is how CloudWatch
+        # manages hierarchical values.  It is the first value of a JSON list.
         query = ("fields correlation_list.0, @timestamp, @message "
                  "| filter ispresent(correlation_list.0) "
                  "| filter task_name = \"HandleWebhookLambda\" "

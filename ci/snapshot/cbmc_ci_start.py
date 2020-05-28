@@ -100,7 +100,7 @@ def lambda_handler(event, context):
         branch_tail = branch.split('/')[-1]
 
         if (name == "aws/amazon-freertos" and branch_tail not in to_check):
-            result = "Ignoring event on repository {} and branch {}: {}".format(name, branch, json.dumps(event))
+            result = f"Ignoring event on repository {name} and branch {branch}: {json.dumps(event)}"
             print(result)
             logger.summary(clog_writert.SUCCEEDED, event, {'result': result})
             return 0
